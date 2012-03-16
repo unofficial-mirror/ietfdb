@@ -1,0 +1,24 @@
+{{ wg.name }} ({{ wg.acronym }})
+------------------------------------------------
+Current Status: {{ wg.state.name }} Working Group
+
+Chairs:
+{% for p in info.chairs %}  {{ p.plain_name }} <{{p.email}}>
+{% endfor %}
+Secretaries:
+{% for p in info.secr %}  {{ p.plain_name }} <{{p.email}}>
+{% endfor %}
+Technical advisors:
+{% for p in info.techadv %}  {{ p.plain_name }} <{{p.email}}>
+{% endfor %}
+Assigned Area Director:
+  {{ info.ad.0.plain_name }} <{{ info.ad.0.email }}>
+
+Mailing list:
+  Address: {{ info.list.0 }}
+  To Subscribe: {{ info.list_subscribe.0 }}
+  Archive: {{ info.list_archive.0 }}
+  
+Charter:
+
+{{ info.charter_txt }}
