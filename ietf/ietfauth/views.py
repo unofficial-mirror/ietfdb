@@ -48,7 +48,7 @@ from django.contrib.auth.models import User
 from django.utils import simplejson as json
 from django.utils.translation import ugettext as _
 
-from forms import (RegistrationForm, PasswordForm, RecoverPasswordForm)
+from forms import *
 
 
 def index(request):
@@ -82,6 +82,23 @@ def ietf_loggedin(request):
     
 @login_required
 def profile(request):
+    if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+        from ietf.person.models import Person
+        from ietf.group.models import Role
+        
+        roles = []
+        person = None
+        try:
+            person = request.user.get_profile()
+            roles = Role.objects.filter(person=person)
+        except Person.DoesNotExist:
+            pass
+        
+        return render_to_response('registration/profileREDESIGN.html',
+                                  dict(roles=roles,
+                                       person=person),
+                                  context_instance=RequestContext(request))
+    
     return render_to_response('registration/profile.html', context_instance=RequestContext(request))
 
 
@@ -90,6 +107,7 @@ def create_account(request):
     if request.method == 'POST':
         form = RegistrationForm(request.POST)
         if form.is_valid():
+            form.request = request
             form.save()
             success = True
     else:
@@ -126,6 +144,7 @@ def password_reset_view(request):
     if request.method == 'POST':
         form = RecoverPasswordForm(request.POST)
         if form.is_valid():
+            form.request = request
             form.save()
             success = True
     else:
@@ -162,3 +181,43 @@ def ajax_check_username(request):
         error = _('This email is already in use')
     return HttpResponse(json.dumps({'error': error}), mimetype='text/plain')
     
+def test_email(request):
+    if settings.SERVER_MODE == "production":
+        raise Http404()
+
+    # note that the cookie set here is only used when running in
+    # "test" mode, normally you run the server in "development" mode,
+    # in which case email is sent out as usual; for development, put
+    # this
+    #
+    # EMAIL_HOST = 'localhost'
+    # EMAIL_PORT = 1025
+    # EMAIL_HOST_USER = None
+    # EMAIL_HOST_PASSWORD = None
+    # EMAIL_COPY_TO = ""
+    #
+    # in your settings.py and start a little debug email server in a
+    # console with the following (it receives and prints messages)
+    #
+    # python -m smtpd -n -c DebuggingServer localhost:1025
+
+    cookie = None
+
+    if request.method == "POST":
+        form = TestEmailForm(request.POST)
+        if form.is_valid():
+            cookie = form.cleaned_data['email']
+    else:
+        form = TestEmailForm(initial=dict(email=request.COOKIES.get('testmailcc')))
+
+    r = render_to_response('ietfauth/testemail.html',
+                           dict(form=form,
+                                cookie=cookie if cookie != None else request.COOKIES.get("testmailcc", "")
+                                ),
+                           context_instance=RequestContext(request))
+
+    if cookie != None:
+        r.set_cookie("testmailcc", cookie)
+
+    return r
+

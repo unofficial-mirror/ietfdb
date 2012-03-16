@@ -22,12 +22,11 @@ import copy
 # ... send some mail ...
 # ... inspect ietf.utils.mail.outbox ...
 # ... call ietf.utils.mail.empty_outbox() ...
-test_mode=False
-outbox=[]
+test_mode = False
+outbox = []
 
 def empty_outbox():
-    global outbox
-    outbox = []
+     outbox[:] = []
 
 def add_headers(msg):
     if not(msg.has_key('Message-ID')):
@@ -58,13 +57,13 @@ def send_smtp(msg, bcc=None):
         log("No addressees for email from '%s', subject '%s'.  Nothing sent." % (frm, msg.get('Subject', '[no subject]')))
     else:
         if test_mode:
-            outbox.append((msg, to, msg.as_string()))
+            outbox.append(msg)
             return
         server = None
         try:
             server = smtplib.SMTP()
-            if settings.DEBUG:
-                server.set_debuglevel(1)
+            #if settings.DEBUG:
+            #    server.set_debuglevel(1)
             server.connect(settings.EMAIL_HOST, settings.EMAIL_PORT)
             if settings.EMAIL_HOST_USER and settings.EMAIL_HOST_PASSWORD:
                 server.ehlo()
@@ -170,7 +169,8 @@ def send_mail_mime(request, to, frm, subject, msg, cc=None, extra=None, toUser=F
     msg['X-IETF-IDTracker'] = ietf.__version__
     if extra:
 	for k, v in extra.items():
-	    msg[k] = v
+            if v:
+	        msg[k] = v
     if test_mode or settings.SERVER_MODE == 'production':
 	send_smtp(msg, bcc)
     elif settings.SERVER_MODE == 'test':
@@ -181,10 +181,11 @@ def send_mail_mime(request, to, frm, subject, msg, cc=None, extra=None, toUser=F
     try:
 	copy_to = settings.EMAIL_COPY_TO
     except AttributeError:
-	copy_to = "ietf.tracker.archive+%s@gmail.com" % settings.SERVER_MODE
-    if bcc:
-        msg['X-Tracker-Bcc']=bcc
-    copy_email(msg, copy_to)
+        copy_to = "ietf.tracker.archive+%s@gmail.com" % settings.SERVER_MODE
+    if copy_to and not test_mode: # if we're running automated tests, this copy is just annoying
+        if bcc:
+            msg['X-Tracker-Bcc']=bcc
+        copy_email(msg, copy_to)
 
 def send_mail_preformatted(request, preformatted):
     """Parse preformatted string containing mail with From:, To:, ...,
@@ -195,3 +196,7 @@ def send_mail_preformatted(request, preformatted):
     for key in ['To', 'From', 'Subject', ]:
         del extra[key]
     send_mail_text(request, msg['To'], msg["From"], msg["Subject"], msg.get_payload(), extra=extra)
+
+def send_mail_message(request, message):
+    # note that this doesn't handle MIME messages at the moment
+    send_mail_text(request, message.to, message.frm, message.subject, message.body, cc=message.cc, bcc=message.bcc, extra={ 'Reply-to': message.reply_to })

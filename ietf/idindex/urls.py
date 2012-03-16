@@ -18,6 +18,7 @@ urlpatterns = patterns('',
 )
 
 if settings.SERVER_MODE != 'production':
+    # these haven't been ported
     urlpatterns += patterns('',
         (r'^_test/all_id.txt$', views.test_all_id_txt),                        
         (r'^_test/all_id2.txt$', views.test_all_id2_txt),

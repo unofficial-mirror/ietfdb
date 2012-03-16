@@ -2,6 +2,7 @@ from django.contrib.contenttypes import generic
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils.translation import ugettext_lazy as _
+from django.conf import settings
 
 from ietf.idtracker.models import PersonOrOrgInfo, InternetDraft, Role, IRTF
 from ietf.utils.admin import admin_link
@@ -200,17 +201,11 @@ class Stream(models.Model):
         for attr_name in self.group_chair_attribute.split('.'):
             attr = getattr(obj, attr_name, None)
             if not attr:
-                return []
+                return None
             if callable(attr):
                 attr = attr()
             obj = attr
-        persons = []
-        for i in attr:
-            if isinstance(i, PersonOrOrgInfo):
-                persons.append(i)
-            elif hasattr(i, 'person'):
-                persons.append(i.person)
-        return persons
+        return attr
 
     def get_delegates_for_document(self, document):
         delegates = []
@@ -268,3 +263,6 @@ class StreamedID(models.Model):
 class StreamDelegate(models.Model):
     stream = models.ForeignKey(Stream)
     person = models.ForeignKey(PersonOrOrgInfo)
+
+if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+    from ietf.name.proxy import StreamProxy as Stream

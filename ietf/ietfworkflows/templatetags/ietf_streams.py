@@ -1,4 +1,6 @@
 from django import template
+from django.conf import settings
+from django.core.urlresolvers import reverse as urlreverse
 
 from ietf.idrfc.idrfc_wrapper import IdRfcWrapper, IdWrapper
 from ietf.ietfworkflows.utils import (get_workflow_for_draft,
@@ -8,8 +10,7 @@ from ietf.wgchairs.accounts import (can_manage_shepherd_of_a_document,
 from ietf.ietfworkflows.streams import get_stream_from_wrapper
 from ietf.ietfworkflows.models import Stream
 from ietf.ietfworkflows.accounts import (can_edit_state, can_edit_stream,
-                                         is_chair_of_stream)
-
+                                         is_chair_of_stream, can_adopt)
 
 register = template.Library()
 
@@ -64,15 +65,26 @@ def edit_actions(context, wrapper):
         idwrapper = wrapper
     if not idwrapper:
         return None
-    draft = idwrapper._draft
-    return {
-        'can_edit_state': can_edit_state(user, draft),
-        'can_edit_stream': can_edit_stream(user, draft),
-        'can_writeup': can_manage_writeup_of_a_document(user, draft),
-        'can_shepherd': can_manage_shepherd_of_a_document(user, draft),
-        'draft': draft,
-        'doc': wrapper,
-    }
+    doc = wrapper
+    draft = wrapper._draft
+
+    actions = []
+    if can_adopt(user, draft):
+        actions.append(("Adopt in WG", urlreverse('edit_adopt', kwargs=dict(name=doc.draft_name))))
+
+    if can_edit_state(user, draft):
+        actions.append(("Change stream state", urlreverse('edit_state', kwargs=dict(name=doc.draft_name))))
+
+    if can_edit_stream(user, draft):
+        actions.append(("Change stream", urlreverse('edit_stream', kwargs=dict(name=doc.draft_name))))
+
+    if can_manage_shepherd_of_a_document(user, draft):
+        actions.append(("Change shepherd", urlreverse('doc_managing_shepherd', kwargs=dict(acronym=draft.group.acronym, name=draft.filename))))
+
+    if can_manage_writeup_of_a_document(user, draft):
+        actions.append(("Change stream writeup", urlreverse('doc_managing_writeup', kwargs=dict(acronym=draft.group.acronym, name=draft.filename))))
+
+    return dict(actions=actions)
 
 
 class StreamListNode(template.Node):
@@ -85,6 +97,8 @@ class StreamListNode(template.Node):
         user = self.user.resolve(context)
         streams = []
         for i in Stream.objects.all():
+            if "Legacy" in i.name:
+                continue
             if is_chair_of_stream(user, i):
                 streams.append(i)
         context.update({self.var_name: streams})

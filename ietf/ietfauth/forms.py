@@ -11,7 +11,7 @@ from django.utils.translation import ugettext, ugettext_lazy as _
 
 from ietf.utils.mail import send_mail
 from ietf.utils import debug
-#from redesign.person.models import Person, Email
+#from ietf.person.models import Person, Email
 
 
 class RegistrationForm(forms.Form):
@@ -21,6 +21,7 @@ class RegistrationForm(forms.Form):
     expire = 3
 
     def save(self, *args, **kwargs):
+        # why is there a save when it doesn't save?
         self.send_email()
         return True
 
@@ -39,7 +40,7 @@ class RegistrationForm(forms.Form):
             'username': to_email,
             'expire': settings.DAYS_TO_EXPIRE_REGISTRATION_LINK,
         }
-        send_mail(None, to_email, from_email, subject, 'registration/creation_email.txt', context)
+        send_mail(self.request, to_email, from_email, subject, 'registration/creation_email.txt', context)
 
     def clean_email(self):
         email = self.cleaned_data.get('email', '')
@@ -70,7 +71,7 @@ class RecoverPasswordForm(RegistrationForm):
             'username': to_email,
             'expire': settings.DAYS_TO_EXPIRE_REGISTRATION_LINK,
         }
-        send_mail(None, to_email, from_email, subject, 'registration/password_reset_email.txt', context)
+        send_mail(self.request, to_email, from_email, subject, 'registration/password_reset_email.txt', context)
 
 
 class PasswordForm(forms.Form):
@@ -123,3 +124,6 @@ class PasswordForm(forms.Form):
         debug.show('stdout')
         debug.show('stderr')        
         return p.returncode
+
+class TestEmailForm(forms.Form):
+    email = forms.EmailField(required=False)

@@ -8,8 +8,11 @@ import os
 import syslog
 syslog.openlog("django", syslog.LOG_PID, syslog.LOG_LOCAL0)
 
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+import sys
+sys.path.append(os.path.abspath(BASE_DIR + "/.."))
+sys.path.append(os.path.abspath(BASE_DIR + "/../redesign"))
 
 DEBUG = True
 TEMPLATE_DEBUG = DEBUG
@@ -21,6 +24,7 @@ ADMINS = (
     ('IETF Django Developers', 'django-project@' + IETF_DOMAIN),
     ('GMail Tracker Archive', 'ietf.tracker.archive+errors@gmail.com'),
     ('Henrik Levkowetz', 'henrik@levkowetz.com'),
+    ('Ole Laursen', 'olau@iola.dk'),
 )
 
 # Server name of the tools server
@@ -33,12 +37,20 @@ DEFAULT_FROM_EMAIL = 'IETF Secretariat <ietf-secretariat-reply@' + IETF_DOMAIN +
 
 MANAGERS = ADMINS
 
-DATABASE_ENGINE = 'mysql'
-DATABASE_NAME = 'ietf'
-DATABASE_USER = 'ietf'
-#DATABASE_PASSWORD = 'ietf'
-DATABASE_PORT = ''
-DATABASE_HOST = ''
+DATABASES = {
+    'default': {
+        'NAME': 'ietf_utf8',
+        'ENGINE': 'django.db.backends.mysql',
+        'USER': 'ietf',
+        #'PASSWORD': 'ietf',
+    },
+    'legacy': {
+        'NAME': 'ietf',
+        'ENGINE': 'django.db.backends.mysql',
+        'USER': 'ietf',
+        #'PASSWORD': 'ietf',
+    },
+}
 
 # Local time zone for this installation. Choices can be found here:
 # http://www.postgresql.org/docs/8.1/static/datetime-keywords.html#DATETIME-TIMEZONE-SET-TABLE
@@ -71,8 +83,10 @@ MEDIA_URL = ''
 # Examples: "http://foo.com/media/", "/media/".
 ADMIN_MEDIA_PREFIX = '/media/'
 
-AUTH_PROFILE_MODULE = 'ietfauth.IetfUserProfile'
-AUTHENTICATION_BACKENDS = ( "ietf.ietfauth.auth.IetfUserBackend", )
+AUTH_PROFILE_MODULE = 'person.Person'
+AUTHENTICATION_BACKENDS = ( 'django.contrib.auth.backends.RemoteUserBackend', )
+
+DATABASE_ROUTERS = ["ietf.legacy_router.LegacyRouter"]
 
 SESSION_COOKIE_AGE = 43200 # 12 hours
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
@@ -122,6 +136,11 @@ INSTALLED_APPS = (
     'south',
     'workflows',
     'permissions',
+    'ietf.person',
+    'ietf.name',
+    'ietf.group',
+    'ietf.doc',
+    'ietf.message',
     'ietf.announcements',
     'ietf.idindex',
     'ietf.idtracker',
@@ -138,6 +157,7 @@ INSTALLED_APPS = (
     'ietf.submit',
     'ietf.ietfworkflows',
     'ietf.wgchairs',
+    'ietf.wgcharter',
 )
 
 INTERNAL_IPS = (
@@ -164,11 +184,16 @@ TEST_RUNNER = 'ietf.utils.test_runner.run_tests'
 # WG Chair configuration
 MAX_WG_DELEGATES = 3
 
+DATE_FORMAT = "Y-m-d"
+DATETIME_FORMAT = "Y-m-d H:i"
+
 # Override this in settings_local.py if needed
 # *_PATH variables ends with a slash/ .
 INTERNET_DRAFT_PATH = '/a/www/ietf-ftp/internet-drafts/'
 INTERNET_DRAFT_PDF_PATH = '/a/www/ietf-datatracker/pdf/'
 RFC_PATH = '/a/www/ietf-ftp/rfc/'
+CHARTER_PATH = '/a/www/ietf-ftp/charters/'
+CHARTER_TXT_URL = 'http://www.ietf.org/charters/'
 AGENDA_PATH = '/a/www/www6s/proceedings/'
 AGENDA_PATH_PATTERN = '/a/www/www6s/proceedings/%(meeting)s/agenda/%(wg)s.%(ext)s'
 MINUTES_PATH_PATTERN = '/a/www/www6s/proceedings/%(meeting)s/minutes/%(wg)s.%(ext)s'
@@ -211,6 +236,11 @@ IDSUBMIT_ANNOUNCE_LIST_EMAIL = 'i-d-announce@ietf.org'
 FIRST_CUTOFF_DAYS = 20
 SECOND_CUTOFF_DAYS = 13
 CUTOFF_HOUR = 24                        # midnight UTC
+SUBMISSION_START_DAYS = -90
+SUBMISSION_CUTOFF_DAYS = 33
+SUBMISSION_CORRECTION_DAYS = 52
+
+INTERNET_DRAFT_DAYS_TO_EXPIRE = 185
 
 IDSUBMIT_REPOSITORY_PATH = INTERNET_DRAFT_PATH
 IDSUBMIT_STAGING_PATH = '/a/www/www6s/staging/'
@@ -234,6 +264,11 @@ MAX_DAILY_SUBMISSION_SIZE = 2000
 DAYS_TO_EXPIRE_REGISTRATION_LINK = 3
 HTPASSWD_COMMAND = "/usr/bin/htpasswd2"
 HTPASSWD_FILE = "/www/htpasswd"
+
+# DB redesign
+USE_DB_REDESIGN_PROXY_CLASSES = True
+
+SOUTH_TESTS_MIGRATE = False 
 
 # Put SECRET_KEY in here, or any other sensitive or site-specific
 # changes.  DO NOT commit settings_local.py to svn.

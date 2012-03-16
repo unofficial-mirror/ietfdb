@@ -38,7 +38,7 @@ from django import db
 from xml.dom import pulldom, Node
 import re
 import urllib2
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import socket
 import sys
 
@@ -147,6 +147,193 @@ def insert_to_database(data):
     db.connection._commit()
     db.connection.close()
 
+def get_std_level_mapping():
+    from ietf.name.models import StdLevelName
+    from ietf.name.utils import name
+    return {
+        "Standard": name(StdLevelName, "std", "Standard"),
+        "Draft Standard": name(StdLevelName, "ds", "Draft Standard"),
+        "Proposed Standard": name(StdLevelName, "ps", "Proposed Standard"),
+        "Informational": name(StdLevelName, "inf", "Informational"),
+        "Experimental": name(StdLevelName, "exp", "Experimental"),
+        "Best Current Practice": name(StdLevelName, "bcp", "Best Current Practice"),
+        "Historic": name(StdLevelName, "hist", "Historic"),
+        "Unknown": name(StdLevelName, "unkn", "Unknown"),
+        }
+
+def get_stream_mapping():
+    from ietf.name.models import StreamName
+    from ietf.name.utils import name
+
+    return {
+        "IETF": name(StreamName, "ietf", "IETF", desc="IETF stream", order=1),
+        "INDEPENDENT": name(StreamName, "ise", "ISE", desc="Independent Submission Editor stream", order=2),
+        "IRTF": name(StreamName, "irtf", "IRTF", desc="Independent Submission Editor stream", order=3),
+        "IAB": name(StreamName, "iab", "IAB", desc="IAB stream", order=4),
+        "Legacy": name(StreamName, "legacy", "Legacy", desc="Legacy stream", order=5),
+    }
+
+
+import django.db.transaction
+
+@django.db.transaction.commit_on_success
+def insert_to_databaseREDESIGN(data):
+    from ietf.person.models import Person
+    from ietf.doc.models import Document, DocAlias, DocEvent, RelatedDocument, State, save_document_in_history
+    from ietf.group.models import Group
+    from ietf.name.models import DocTagName, DocRelationshipName
+    from ietf.name.utils import name
+    
+    system = Person.objects.get(name="(System)")
+    std_level_mapping = get_std_level_mapping()
+    stream_mapping = get_stream_mapping()
+    tag_has_errata = name(DocTagName, 'errata', "Has errata")
+    relationship_obsoletes = name(DocRelationshipName, "obs", "Obsoletes")
+    relationship_updates = name(DocRelationshipName, "updates", "Updates")
+
+    skip_older_than_date = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+
+    log("updating data...")
+    for d in data:
+        rfc_number, title, authors, rfc_published_date, current_status, updates, updated_by, obsoletes, obsoleted_by, also, draft, has_errata, stream, wg, file_formats = d
+
+        if rfc_published_date < skip_older_than_date:
+            # speed up the process by skipping old entries
+            continue
+
+        # we assume two things can happen: we get a new RFC, or an
+        # attribute has been updated at the RFC Editor (RFC Editor
+        # attributes currently take precedence over our local
+        # attributes)
+
+        # make sure we got the document and alias
+        created = False
+        doc = None
+        name = "rfc%s" % rfc_number
+        a = DocAlias.objects.filter(name=name)
+        if a:
+            doc = a[0].document
+        else:
+            if draft:
+                try:
+                    doc = Document.objects.get(name=draft)
+                except Document.DoesNotExist:
+                    pass
+
+            if not doc:
+                created = True
+                log("created document %s" % name)
+                doc = Document.objects.create(name=name)
+
+            # add alias
+            DocAlias.objects.create(name=name, document=doc)
+            if not created:
+                created = True
+                log("created alias %s to %s" % (name, doc.name))
+
+                
+        # check attributes
+        changed_attributes = {}
+        changed_states = []
+        created_relations = []
+        other_changes = False
+        if title != doc.title:
+            changed_attributes["title"] = title
+
+        if std_level_mapping[current_status] != doc.std_level:
+            changed_attributes["std_level"] = std_level_mapping[current_status]
+
+        if doc.get_state_slug() != "rfc":
+            changed_states.append(State.objects.get(type="draft", slug="rfc"))
+
+        if doc.stream != stream_mapping[stream]:
+            changed_attributes["stream"] = stream_mapping[stream]
+
+        if not doc.group and wg:
+            changed_attributes["group"] = Group.objects.get(acronym=wg)
+
+        if not doc.latest_event(type="published_rfc"):
+            e = DocEvent(doc=doc, type="published_rfc")
+            pubdate = datetime.strptime(rfc_published_date, "%Y-%m-%d")
+            # unfortunately, pubdate doesn't include the correct day
+            # at the moment because the data only has month/year, so
+            # try to deduce it
+            synthesized = datetime.now()
+            if abs(pubdate - synthesized) > timedelta(days=60):
+                synthesized = pubdate
+            else:
+                direction = -1 if (pubdate - synthesized).total_seconds() < 0 else +1
+                while synthesized.month != pubdate.month or synthesized.year != pubdate.year:
+                    synthesized += timedelta(days=direction)
+            e.time = synthesized
+            e.by = system
+            e.desc = "RFC published"
+            e.save()
+            other_changes = True
+
+        if doc.get_state_slug("draft-iesg") == "rfcqueue":
+            changed_states.append(State.objects.get(type="draft-iesg", slug="pub"))
+
+        def parse_relation_list(s):
+            if not s:
+                return []
+            res = []
+            for x in s.split(","):
+                if x[:3] in ("NIC", "IEN", "STD", "RTR"):
+                    # try translating this to RFCs that we can handle
+                    # sensibly; otherwise we'll have to ignore them
+                    l = DocAlias.objects.filter(name__startswith="rfc", document__docalias__name=x.lower())
+                else:
+                    l = DocAlias.objects.filter(name=x.lower())
+
+                for a in l:
+                    if a not in res:
+                        res.append(a)
+            return res
+
+        for x in parse_relation_list(obsoletes):
+            if not RelatedDocument.objects.filter(source=doc, target=x, relationship=relationship_obsoletes):
+                created_relations.append(RelatedDocument(source=doc, target=x, relationship=relationship_obsoletes))
+
+        for x in parse_relation_list(updates):
+            if not RelatedDocument.objects.filter(source=doc, target=x, relationship=relationship_updates):
+                created_relations.append(RelatedDocument(source=doc, target=x, relationship=relationship_updates))
+
+        if also:
+            for a in also.lower().split(","):
+                if not DocAlias.objects.filter(name=a):
+                    DocAlias.objects.create(name=a, document=doc)
+                    other_changes = True
+
+        if has_errata:
+            if not doc.tags.filter(pk=tag_has_errata.pk):
+                changed_attributes["tags"] = list(doc.tags.all()) + [tag_has_errata]
+        else:
+            if doc.tags.filter(pk=tag_has_errata.pk):
+                changed_attributes["tags"] = set(doc.tags.all()) - set([tag_has_errata])
+
+        if changed_attributes or changed_states or created_relations or other_changes:
+            # apply changes
+            save_document_in_history(doc)
+            for k, v in changed_attributes.iteritems():
+                setattr(doc, k, v)
+
+            for s in changed_states:
+                doc.set_state(s)
+
+            for o in created_relations:
+                o.save()
+
+            doc.time = datetime.now()
+            doc.save()
+
+            if not created:
+                log("%s changed" % name)
+
+
+if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+    insert_to_database = insert_to_databaseREDESIGN
+    
 if __name__ == '__main__':
     try:
         log("output from mirror_rfc_index.py:\n")

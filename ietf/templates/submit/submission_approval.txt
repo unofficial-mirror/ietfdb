@@ -1,7 +1,9 @@
-{% autoescape off %}
-WG chair approval is needed for posting of {{ draft.filename }}-{{ draft.revision }} draft 
+WG chair approval is needed for posting of {{ draft.filename }}-{{ draft.revision }}.
 
-I-D Submission Tool URL: http://{{ domain }}/submit/status/{{ draft.submission_id }}/{{ draft.submission_hash }}/
+Go to this URL to approve the draft (note: you need to login to be
+able to approve):
+
+https://{{ domain }}/submit/status/{{ draft.submission_id }}/{{ draft.submission_hash }}/
 
 File name: {{ draft.filename }}
 Version: {{ draft.revision }}
@@ -14,9 +16,8 @@ Abstract: {{ draft.abstract }}
 Pages: {{ draft.txt_page_count }}
 File size: {{ draft.filesize|filesizeformat }}
 
-Submitter: {{ submitter.first_name }} {{ submitter.last_name }} <{{ submitter.email_address }}>
+Submitter: {{ submitter.get_full_name }} <{{ submitter.email_address }}>
 
-Author(s):
-{% for author in form.get_authors %}{{ author.first_name }} {{ author.last_name }} <{{ author.email.1 }}>
+Authors:
+{% for author in authors %}{{ author.get_full_name }} <{{ author.email.1 }}>
 {% endfor %}
-{% endautoescape %}

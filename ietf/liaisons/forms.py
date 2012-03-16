@@ -5,7 +5,7 @@ from django import forms
 from django.conf import settings
 from django.db.models import Q
 from django.forms.util import ErrorList
-from django.forms.fields import email_re
+from django.core.validators import email_re
 from django.template.loader import render_to_string
 
 from ietf.idtracker.models import PersonOrOrgInfo
@@ -361,7 +361,7 @@ class OutgoingLiaisonForm(LiaisonForm):
         person = self.fake_person or self.person
         for i in self.hm.get_entities_for_person(person):
             all_entities += i[1]
-        # If the from entity is one in which the user has full privileges the to entity could be anyone
+        # If the from entity is one in wich the user has full privileges the to entity could be anyone
         if from_code in [i[0] for i in all_entities]:
             return to_code
         sdo_codes = ['sdo_%s' % i.sdo.pk for i in person.liaisonmanagers_set.all().distinct()]
@@ -425,3 +425,6 @@ def liaison_form_factory(request, **kwargs):
     elif can_add_incoming_liaison(user):
         return IncomingLiaisonForm(user, **kwargs)
     return None
+
+if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+    from ietf.liaisons.formsREDESIGN import *

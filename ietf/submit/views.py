@@ -132,9 +132,9 @@ def draft_status(request, submission_id, submission_hash=None, message=None):
                         to_email += [i.person.email()[1] for i in detail.group_acronym.wgchair_set.all()]
                     to_email = list(set(to_email))
                     if to_email:
-                        metadata_form = MetaDataForm(draft=detail, validation=validation)
+                        authors = detail.tempidauthors_set.exclude(author_order=0).order_by('author_order')
                         send_mail(request, to_email, from_email, subject, 'submit/submission_approval.txt',
-                                  {'submitter': submitter, 'form': metadata_form,
+                                  {'submitter': submitter, 'authors': authors,
                                    'draft': detail, 'domain': Site.objects.get_current().domain})
                     return HttpResponseRedirect(reverse(draft_status, None, kwargs={'submission_id': detail.submission_id}))
                 else:
@@ -149,7 +149,11 @@ def draft_status(request, submission_id, submission_hash=None, message=None):
                     allow_edit = None
                     message = ('success', 'Your submission is pending email authentication. An email has been sent you with instructions.')
         else:
-            return HttpResponseRedirect(reverse(draft_edit, None, kwargs={'submission_id': detail.submission_id, 'submission_hash': submission_hash}))
+            submission_hash = detail.get_hash()
+            if submission_hash:
+                return HttpResponseRedirect(reverse('draft_edit_by_hash', None, kwargs={'submission_id': detail.submission_id, 'submission_hash': submission_hash}))
+            else:
+                return HttpResponseRedirect(reverse(draft_edit, None, kwargs={'submission_id': detail.submission_id }))
     else:
         auto_post_form = AutoPostForm(draft=detail, validation=validation)
 
@@ -212,6 +216,7 @@ def draft_edit(request, submission_id, submission_hash=None):
                                'detail': detail,
                                'validation': validation,
                                'form': form,
+                               'settings': settings
                               },
                               context_instance=RequestContext(request))
 
@@ -226,7 +231,7 @@ def draft_confirm(request, submission_id, auth_key):
     else:
         if request.method=='POST':
             message = ('success', 'Authorization key accepted. Auto-Post complete')
-            perform_post(detail)
+            perform_post(request, detail)
         else:
             return render_to_response('submit/last_confirmation_step.html',
                                {'detail': detail, },
@@ -243,7 +248,7 @@ def draft_approve(request, submission_id, check_function=_can_approve):
         if can_perform == None:
             raise Http404
         return HttpResponseForbidden('You have no permission to perform this action')
-    perform_post(detail)
+    perform_post(request, detail)
     return HttpResponseRedirect(reverse(draft_status, None, kwargs={'submission_id': submission_id}))
 
 

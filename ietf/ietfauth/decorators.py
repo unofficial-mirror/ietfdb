@@ -31,34 +31,77 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from django.utils.http import urlquote
-from django.contrib.auth.decorators import _CheckLogin
+from django.conf import settings
+from django.db.models import Q
 from django.http import HttpResponseRedirect, HttpResponseForbidden
+from django.contrib.auth import REDIRECT_FIELD_NAME
 
-# based on http://www.djangosnippets.org/snippets/254/
-class _CheckLogin403(_CheckLogin):
-    def __init__(self, view_func, test_func, forbidden_message=None):
-        self.forbidden_message = forbidden_message
-        super(_CheckLogin403, self).__init__(view_func, test_func)
-
-    def __call__(self, request, *args, **kwargs):
-        if not request.user.is_authenticated():
-            path = urlquote(request.get_full_path())
-            tup = self.login_url, self.redirect_field_name, path
-            return HttpResponseRedirect('%s?%s=%s' % tup)
-        elif self.test_func(request.user):
-            return self.view_func(request, *args, **kwargs)
-        else:
-            return HttpResponseForbidden(self.forbidden_message)
-
-# based on http://www.djangosnippets.org/snippets/1703/
-def group_required(*group_names):
+def passes_test_decorator(test_func, message):
     """
-    Decorator for views that checks that the user is logged in,
-    and belongs to (at least) one of the listed groups. Users who
-    are not logged in are redirected to the login page; users
-    who don't belong to any of the groups (but are logged in) 
-    get a "403" page.
+    Decorator creator that creates a decorator for checking that user
+    passes the test, redirecting to login or returning a 403
+    error. The test function should be on the form fn(user) ->
+    true/false.
     """
     def decorate(view_func):
-        return _CheckLogin403(view_func, lambda u: bool(u.groups.filter(name__in=group_names)), "Restricted to group%s %s" % ("s" if len(group_names) != 1 else "", ",".join(group_names)))
+        def inner(request, *args, **kwargs):
+            if not request.user.is_authenticated():
+                return HttpResponseRedirect('%s?%s=%s' % (settings.LOGIN_URL, REDIRECT_FIELD_NAME, urlquote(request.get_full_path())))
+            elif test_func(request.user):
+                return view_func(request, *args, **kwargs)
+            else:
+                return HttpResponseForbidden(message)
+        return inner
     return decorate
+
+def group_required(*group_names):
+    """Decorator for views that checks that the user is logged in,
+    and belongs to (at least) one of the listed groups."""
+    return passes_test_decorator(lambda u: u.groups.filter(name__in=group_names),
+                                 "Restricted to group%s %s" % ("s" if len(group_names) != 1 else "", ",".join(group_names)))
+
+
+def has_role(user, role_names):
+    """Determines whether user has any of the given standard roles
+    given. Role names must be a list or, in case of a single value, a
+    string."""
+    if isinstance(role_names, str) or isinstance(role_names, unicode):
+        role_names = [ role_names ]
+    
+    if not user or not user.is_authenticated():
+        return False
+
+    from ietf.person.models import Person
+    
+    try:
+        person = user.get_profile()
+    except Person.DoesNotExist:
+        return False
+
+    role_qs = {
+        "Area Director": Q(person=person, name__in=("pre-ad", "ad"), group__type="area", group__state="active"),
+        "Secretariat": Q(person=person, name="secr", group__acronym="secretariat"),
+        "IANA": Q(person=person, name="auth", group__acronym="iana"),
+        "IAD": Q(person=person, name="admdir", group__acronym="ietf"),
+        "IETF Chair": Q(person=person, name="chair", group__acronym="ietf"),
+        "IAB Chair": Q(person=person, name="chair", group__acronym="iab"),
+        "WG Chair": Q(person=person,name="chair", group__type="wg", group__state="active"),
+        "WG Secretary": Q(person=person,name="secr", group__type="wg", group__state="active"),
+        }
+
+    filter_expr = Q()
+    for r in role_names:
+        filter_expr |= role_qs[r]
+
+    from ietf.group.models import Role
+    return bool(Role.objects.filter(filter_expr)[:1])
+
+def role_required(*role_names):
+    """View decorator for checking that the user is logged in and
+    has one of the listed roles."""
+    return passes_test_decorator(lambda u: has_role(u, role_names),
+                                 "Restricted to role%s %s" % ("s" if len(role_names) != 1 else "", ", ".join(role_names)))
+    
+if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+    # overwrite group_required
+    group_required = lambda *group_names: role_required(*[n.replace("Area_Director", "Area Director") for n in group_names])

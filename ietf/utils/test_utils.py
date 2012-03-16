@@ -38,19 +38,20 @@ import django
 from django.db import connection
 from django.test import TestCase
 from django.test.client import Client
-import ietf
+import ietf.settings
 from django.conf import settings
 from datetime import datetime
 import urllib2 as urllib
 from difflib import unified_diff
 
+real_database_name = ietf.settings.DATABASES["default"]["NAME"]
 
 import traceback
 
 class RealDatabaseTest:
     def setUpRealDatabase(self):
         self._original_testdb = self._getDatabaseName()
-        newdb = ietf.settings.DATABASE_NAME
+        newdb = real_database_name
         print "     Switching database from "+self._original_testdb+" to "+newdb
         self._setDatabaseName(newdb)
 
@@ -60,12 +61,12 @@ class RealDatabaseTest:
         self._setDatabaseName(self._original_testdb)
 
     def _getDatabaseName(self):
-        return connection.settings_dict['DATABASE_NAME'] 
+        return connection.settings_dict['NAME'] 
 
     def _setDatabaseName(self, name):        
         connection.close()
-        django.conf.settings.DATABASE_NAME = name
-        connection.settings_dict['DATABASE_NAME'] = name
+        django.conf.settings.DATABASES["default"]["NAME"] = name
+        connection.settings_dict['NAME'] = name
         connection.cursor()
 
 def read_testurls(filename):
@@ -117,7 +118,10 @@ class SimpleUrlTestCase(TestCase,RealDatabaseTest):
         self.tearDownRealDatabase()
 
     def doTestUrls(self, test_filename):
-        filename = os.path.dirname(os.path.abspath(test_filename))+"/testurl.list"
+        if test_filename.endswith(".list"):
+            filename = test_filename
+        else:
+            filename = os.path.dirname(os.path.abspath(test_filename))+"/testurl.list"
         print "     Reading "+filename
         tuples = read_testurls(filename)
         failures = 0
@@ -210,8 +214,9 @@ def canonicalize_sitemap(s):
         
 def login_testing_unauthorized(tc, remote_user, url):
     r = tc.client.get(url)
-    tc.assertEquals(r.status_code, 302)
-    tc.assertTrue("/accounts/login" in r['Location'])
+    tc.assertTrue(r.status_code in (302, 403))
+    if r.status_code == 302:
+        tc.assertTrue("/accounts/login" in r['Location'])
 
     tc.client.login(remote_user=remote_user)
     

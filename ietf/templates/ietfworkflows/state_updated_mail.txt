@@ -1,4 +1,3 @@
-{% autoescape off %}
 The state of document {{ doc }} has been updated. See more information below.
 
 Previous state: {{ entry.from_state }}
@@ -8,4 +7,3 @@ Author of the change: {{ entry.person }}
 
 Comment:
 {{ entry.comment }}
-{% endautoescape %}

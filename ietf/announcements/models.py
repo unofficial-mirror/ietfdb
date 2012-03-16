@@ -1,6 +1,7 @@
 # Copyright The IETF Trust 2007, All Rights Reserved
 
 from django.db import models
+from django.conf import settings
 from ietf.idtracker.models import PersonOrOrgInfo, ChairsHistory
 #from django.contrib.auth.models import Permission
 
@@ -85,5 +86,3 @@ class ScheduledAnnouncement(models.Model):
 	return "Scheduled Announcement from %s to %s on %s %s" % (self.from_val, self.to_val, self.to_be_sent_date, self.to_be_sent_time)
     class Meta:
         db_table = 'scheduled_announcements'
-
-

@@ -2,10 +2,12 @@
 
 import textwrap
 from django import template
+from django.conf import settings
 from django.utils.html import escape, fix_ampersands
-from django.template.defaultfilters import linebreaksbr, wordwrap, stringfilter
+from django.template.defaultfilters import linebreaksbr, wordwrap, stringfilter, urlize, truncatewords_html
 from django.template import resolve_variable
 from django.utils.safestring import mark_safe, SafeData
+from django.utils import simplejson
 try:
     from email import utils as emailutils
 except ImportError:
@@ -407,7 +409,17 @@ def startswith(x, y):
 # based on http://www.djangosnippets.org/snippets/847/ by 'whiteinge'
 @register.filter
 def in_group(user, groups):
+    if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+        return has_role(user, groups.replace("Area_Director", "Area Director"))
+
     return user and user.is_authenticated() and bool(user.groups.filter(name__in=groups.split(',')).values('name'))
+
+@register.filter
+def has_role(user, role_names):
+    from ietf.ietfauth.decorators import has_role
+    if not user:
+        return False
+    return has_role(user, role_names.split(','))
 
 @register.filter
 def stable_dictsort(value, arg):
@@ -419,6 +431,40 @@ def stable_dictsort(value, arg):
     decorated = [(resolve_variable('var.' + arg, {'var' : item}), item) for item in value]
     decorated.sort(lambda a, b: cmp(a[0], b[0]) if a[0] and b[0] else -1 if b[0] else 1 if a[0] else 0)
     return [item[1] for item in decorated]
+
+@register.filter
+def ad_area(user):
+    if user and user.is_authenticated():
+        from ietf.group.models import Group
+        g = Group.objects.filter(role__name__in=("pre-ad", "ad"), role__person__user=user)
+        if g:
+            return g[0].acronym
+    return None
+
+@register.filter
+def format_history_text(text):
+    """Run history text through some cleaning and add ellipsis if it's too long."""
+    full = mark_safe(sanitize_html(keep_spacing(linebreaksbr(urlize(mark_safe(text))))))
+    snipped = truncatewords_html(format_textarea(fill(text, 80)), 25)
+    if snipped[-3:] == "...":
+        return mark_safe(u'<div class="snipped">%s<div class="showAll">[show all]</div><div><div style="display:none" class="full">%s</div>' % (snipped, full))
+    return full
+
+@register.filter
+def user_roles_json(user):
+    roles = {}
+    if not isinstance(user, basestring) and user.is_authenticated():
+        if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            from ietf.group.models import Role
+            for r in Role.objects.filter(person__user=user).select_related(depth=1):
+                if r.name_id == "secr" and r.group.acronym == "secretariat":
+                    roles["Secretariat"] = True
+                elif r.name_id == "ad" and r.group.type_id == "area" and r.group.state_id == "active":
+                    roles["Area Director"] = roles["Area_Director"] = True
+        else:
+            for g in user.groups.all():
+                roles[g.name] = True
+    return mark_safe(simplejson.dumps(roles))
 
 def _test():
     import doctest

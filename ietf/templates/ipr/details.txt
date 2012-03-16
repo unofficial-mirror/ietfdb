@@ -1,4 +1,4 @@
-{% autoescape off %}{% load ietf_filters %}IPR Title: {{ ipr.title|safe }}
+{% load ietf_filters %}IPR Title: {{ ipr.title|safe }}
 
 
 Section I: Patent Holder/Applicant ("Patent Holder")
@@ -76,4 +76,3 @@ Section VII: Contact Information of Submitter of this Form (if different from IE
 
 Section VIII: Other Note(s)
 {{ ipr.other_notes|safe }}
-{% endautoescape %}

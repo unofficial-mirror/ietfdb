@@ -12,7 +12,8 @@ class IdSubmissionStatus(models.Model):
     status_value = models.CharField(blank=True, max_length=255)
 
     class Meta:
-        db_table = 'id_submission_status'
+        if not settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            db_table = 'id_submission_status'
 
     def __unicode__(self):
         return self.status_value
@@ -25,7 +26,7 @@ class IdSubmissionDetail(models.Model):
     last_updated_time = models.CharField(null=True, blank=True, max_length=25)
     id_document_name = models.CharField(null=True, blank=True, max_length=255)
     group_acronym = models.ForeignKey(IETFWG, null=True, blank=True)
-    filename = models.CharField(null=True, blank=True, max_length=255)
+    filename = models.CharField(null=True, blank=True, max_length=255, db_index=True)
     creation_date = models.DateField(null=True, blank=True)
     submission_date = models.DateField(null=True, blank=True)
     remote_ip = models.CharField(null=True, blank=True, max_length=100)
@@ -50,7 +51,8 @@ class IdSubmissionDetail(models.Model):
     submission_hash = models.CharField(null=True, blank=True, max_length=255)
 
     class Meta:
-        db_table = 'id_submission_detail'
+        if not settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            db_table = 'id_submission_detail'
 
     def create_hash(self):
         self.submission_hash = md5_constructor(settings.SECRET_KEY + self.filename).hexdigest()
@@ -77,14 +79,15 @@ def create_submission_hash(sender, instance, **kwargs):
 models.signals.pre_save.connect(create_submission_hash, sender=IdSubmissionDetail)
 
 class IdApprovedDetail(models.Model):
-    filename = models.CharField(null=True, blank=True, max_length=255)
+    filename = models.CharField(null=True, blank=True, max_length=255, db_index=True)
     approved_status = models.IntegerField(null=True, blank=True)
     approved_person_tag = models.IntegerField(null=True, blank=True)
     approved_date = models.DateField(null=True, blank=True)
     recorded_by = models.IntegerField(null=True, blank=True)
 
     class Meta:
-        db_table = 'id_approved_detail'
+        if not settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            db_table = 'id_approved_detail'
 
     def __unicode__(self):
         return "%s (%s)" % (self.filename, self.approved_status)
@@ -92,7 +95,7 @@ class IdApprovedDetail(models.Model):
 
 class TempIdAuthors(models.Model):
     id_document_tag = models.IntegerField()
-    first_name = models.CharField(blank=True, max_length=255)
+    first_name = models.CharField(blank=True, max_length=255) # with new schema, this contains the full name while the other name fields are empty to avoid loss of information
     last_name = models.CharField(blank=True, max_length=255)
     email_address = models.CharField(blank=True, max_length=255)
     last_modified_date = models.DateField(null=True, blank=True)
@@ -103,16 +106,15 @@ class TempIdAuthors(models.Model):
     name_suffix = models.CharField(blank=True, max_length=255, null=True)
 
     class Meta:
-        db_table = 'temp_id_authors'
+        if not settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            db_table = 'temp_id_authors'
 
     def email(self):
-        return ('%s %s' % (self.first_name, self.last_name), self.email_address)
+        return (self.get_full_name(), self.email_address)
 
     def get_full_name(self):
-        full_name = ('%s %s %s %s') % (self.first_name, self.middle_initial or '',
-            self.last_name, self.name_suffix or '')
-        full_name = re.sub(' +', ' ', full_name).strip()
-        return full_name
+        parts = (self.first_name or '', self.middle_initial or '', self.last_name or '', self.name_suffix or '')
+        return u" ".join(x.strip() for x in parts if x.strip())
 
     def __unicode__(self):
         return u"%s <%s>" % self.email()

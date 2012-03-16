@@ -40,6 +40,7 @@ from django.utils import simplejson as json
 from django.db.models import Q
 from django.db import models
 from django.core.urlresolvers import reverse
+from django.conf import settings
 import types
 
 BALLOT_ACTIVE_STATES = ['In Last Call',
@@ -90,7 +91,7 @@ class IdWrapper:
     
     def __init__(self, draft):
         self.id = self
-        if isinstance(draft, IDInternal):
+        if isinstance(draft, IDInternal) and not settings.USE_DB_REDESIGN_PROXY_CLASSES:
             self._idinternal = draft
             self._draft = self._idinternal.draft
         else:
@@ -119,6 +120,15 @@ class IdWrapper:
             self.publication_date = date(1990,1,1)
 
     def rfc_editor_state(self):
+        if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            s = self._draft.get_state("draft-rfceditor")
+            if s:
+                # extract possible extra states
+                tags = self._draft.tags.filter(slug__in=("iana-crd", "ref", "missref"))
+                return " ".join([s.name] + [t.slug.replace("-crd", "").upper() for t in tags])
+            else:
+                return None
+        
         try:
             qs = self._draft.rfc_editor_queue_state
             return qs.state
@@ -148,9 +158,16 @@ class IdWrapper:
 
         if self._draft.group_id == Acronym.INDIVIDUAL_SUBMITTER:
             return "Individual"
-        
+
+        if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            if self._draft.group and self._draft.group.type_id == "area":
+                return u"Individual in %s area" % self._draft.group.acronym
+
         a = self.group_acronym()
         if a:
+            if settings.USE_DB_REDESIGN_PROXY_CLASSES and self._draft.stream_id == "ietf" and self._draft.get_state_slug("draft-stream-ietf") == "c-adopt":
+                return "candidate for <a href='/wg/%s/'>%s WG</a>" % (a, a)
+
             return "<a href='/wg/%s/'>%s WG</a>" % (a, a)
 
         return ""
@@ -161,7 +178,7 @@ class IdWrapper:
         if self._idinternal and self._idinternal.via_rfc_editor:
             return "www.ietf.org/mail-archive/web/"
 
-        if self._draft.group_id == Acronym.INDIVIDUAL_SUBMITTER:
+        if self._draft.group_id == Acronym.INDIVIDUAL_SUBMITTER or (settings.USE_DB_REDESIGN_PROXY_CLASSES and self._draft.group.type_id == "area"):
             return "www.ietf.org/mail-archive/web/"
         
         a = self._draft.group_ml_archive()
@@ -175,6 +192,8 @@ class IdWrapper:
 
     def group_acronym(self):
         if self._draft.group_id != 0 and self._draft.group != None and str(self._draft.group) != "none":
+            if settings.USE_DB_REDESIGN_PROXY_CLASSES and self._draft.group.type_id == "area":
+                return None
             return str(self._draft.group)
         else:
             return None
@@ -281,10 +300,16 @@ class RfcWrapper:
         self.rfc = self
 
         if not self._idinternal:
-            try:
-                self._idinternal = IDInternal.objects.get(rfc_flag=1, draft=self._rfcindex.rfc_number)
-            except IDInternal.DoesNotExist:
-                pass
+            if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+                pub = rfcindex.rfc_published_date
+                started = rfcindex.started_iesg_process if hasattr(rfcindex, 'started_iesg_process') else rfcindex.latest_event(type="started_iesg_process")
+                if pub and started and pub < started.time.date():
+                    self._idinternal = rfcindex
+            else:
+                try:
+                    self._idinternal = IDInternal.objects.get(rfc_flag=1, draft=self._rfcindex.rfc_number)
+                except IDInternal.DoesNotExist:
+                    pass
             
         if self._idinternal:
             self.ietf_process = IetfProcessData(self._idinternal)
@@ -295,7 +320,12 @@ class RfcWrapper:
         self.maturity_level = self._rfcindex.current_status
         if not self.maturity_level:
             self.maturity_level = "Unknown"
-            
+
+        if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            if not rfcindex.name.startswith('rfc'):
+                self.draft_name = rfcindex.name
+            return # we've already done the lookup while importing so skip the rest
+
         ids = InternetDraft.objects.filter(rfc_number=self.rfc_number)
         if len(ids) >= 1:
             self.draft_name = ids[0].filename
@@ -307,10 +337,10 @@ class RfcWrapper:
                 self.draft_name = self._rfcindex.draft
             
     def _rfc_doc_list(self, name):
-        if (not self._rfcindex) or (not self._rfcindex.__dict__[name]):
+        if (not self._rfcindex) or (not getattr(self._rfcindex, name)):
             return None
         else:
-            s = self._rfcindex.__dict__[name]
+            s = getattr(self._rfcindex, name)
             s = s.replace(",", ",  ")
             s = re.sub("([A-Z])([0-9])", "\\1 \\2", s)
             return s
@@ -418,7 +448,7 @@ class IetfProcessData:
     # don't call this unless has_[active_]iesg_ballot returns True
     def iesg_ballot_needed( self ):
 	standardsTrack = 'Standard' in self.intended_maturity_level() or \
-			self.intended_maturity_level() == "BCP"
+			self.intended_maturity_level() in ("BCP", "Best Current Practice")
 	return self.iesg_ballot().ballot.needed( standardsTrack )
 
     def ad_name(self):
@@ -436,9 +466,21 @@ class IetfProcessData:
 
     def state_date(self):
         try:
+            if settings.USE_DB_REDESIGN_PROXY_CLASSES:
+                return self._idinternal.docevent_set.filter(
+                    Q(desc__istartswith="Draft Added by ")|
+                    Q(desc__istartswith="Draft Added in state ")|
+                    Q(desc__istartswith="Draft added in state ")|
+                    Q(desc__istartswith="State changed to ")|
+                    Q(desc__istartswith="State Changes to ")|
+                    Q(desc__istartswith="Sub state has been changed to ")|
+                    Q(desc__istartswith="State has been changed to ")|
+                    Q(desc__istartswith="IESG has approved and state has been changed to")|
+                    Q(desc__istartswith="IESG process started in state")).order_by('-time')[0].time.date()
             return self._idinternal.comments().filter(
                 Q(comment_text__istartswith="Draft Added by ")|
                 Q(comment_text__istartswith="Draft Added in state ")|
+                Q(comment_text__istartswith="Draft added in state ")|
                 Q(comment_text__istartswith="State changed to ")|
                 Q(comment_text__istartswith="State Changes to ")|
                 Q(comment_text__istartswith="Sub state has been changed to ")|
@@ -684,8 +726,73 @@ class BallotWrapper:
             return []
         else:
             return self._ballot_set.exclude(draft=self._idinternal)
-    
+
     def _init(self):
+        if not settings.USE_DB_REDESIGN_PROXY_CLASSES:
+            self.old_init()
+            return
+
+        from ietf.person.models import Person
+        from ietf.doc.models import BallotPositionDocEvent, NewRevisionDocEvent
+
+        active_ads = Person.objects.filter(role__name="ad", role__group__state="active").distinct()
+        
+        positions = []
+        seen = {}
+
+        new_revisions = list(NewRevisionDocEvent.objects.filter(doc=self.ballot, type="new_revision").order_by('-time', '-id'))
+
+	for pos in BallotPositionDocEvent.objects.filter(doc=self.ballot, type="changed_ballot_position", time__gte=self.ballot.process_start, time__lte=self.ballot.process_end).select_related('ad').order_by("-time", '-id'):
+            if pos.ad not in seen:
+                p = dict(ad_name=pos.ad.plain_name(),
+                         ad_username=pos.ad.pk, # ought to rename this in doc_ballot_list
+                         position=pos.pos.name,
+                         is_old_ad=pos.ad not in active_ads,
+                         old_positions=[])
+
+                rev = pos.doc.rev
+                for n in new_revisions:
+                    if n.time <= pos.time:
+                        rev = n.rev
+                        break
+
+                if pos.pos.slug == "discuss":
+                    p["has_text"] = True
+                    p["discuss_text"] = pos.discuss
+                    p["discuss_date"] = pos.discuss_time.date()
+                    p["discuss_revision"] = rev
+
+                if pos.comment:
+                    p["has_text"] = True
+                    p["comment_text"] = pos.comment
+                    p["comment_date"] = pos.comment_time.date()
+                    p["comment_revision"] = rev
+
+                positions.append(p)
+                seen[pos.ad] = p
+            else:
+                latest = seen[pos.ad]
+                if latest["old_positions"]:
+                    prev = latest["old_positions"][-1]
+                else:
+                    prev = latest["position"]
+                    
+                if prev != pos.pos.name:
+                    seen[pos.ad]["old_positions"].append(pos.pos.name)
+
+        # add any missing ADs as No Record
+        if self.ballot_active:
+            for ad in active_ads:
+                if ad not in seen:
+                    d = dict(ad_name=ad.plain_name(),
+                             ad_username=ad.pk,
+                             position="No Record",
+                             )
+                    positions.append(d)
+
+        self._positions = positions
+        
+    def old_init(self):
         try:
             ads = set()
         except NameError:
@@ -784,7 +891,7 @@ def position_to_string(position):
         return "No Record"
     p = None
     for k,v in positions.iteritems():
-        if position.__dict__[k] > 0:
+        if getattr(position, k) > 0:
             p = v
     if not p:
         p = "No Record"
